@@ -154,6 +154,13 @@ function loadHistoryEntry(entry: RequestHistoryEntry) {
     : emptyResponse();
 }
 
+function formatTimestamp(timestamp: string) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(timestamp));
+}
+
 function updateContentType(value: HttpContentType | null) {
   contentType.value = value;
 
@@ -247,7 +254,7 @@ onBeforeUnmount(stopResize);
               v-for="(item, index) in recentRequests"
               :key="`${item.request.url}-${index}`"
               :title="`${item.request.method} ${item.request.url}`"
-              subtitle="Sent request"
+              :subtitle="formatTimestamp(item.timestamp)"
               @click="loadHistoryEntry(item)"
             />
           </v-list>
@@ -257,14 +264,24 @@ onBeforeUnmount(stopResize);
         </div>
 
         <v-divider />
-        <v-switch
-          v-model="isDarkTheme"
-          class="ma-4"
-          label="Dark theme"
-          color="primary"
-          hide-details
-          inset
-        />
+        <v-tooltip
+          :text="isDarkTheme ? 'Use light theme' : 'Use dark theme'"
+          location="right"
+        >
+          <template #activator="{ props }">
+            <v-switch
+              v-bind="props"
+              v-model="isDarkTheme"
+              class="theme-switch ma-2"
+              :prepend-icon="isDarkTheme ? 'mdi-weather-night' : 'mdi-white-balance-sunny'"
+              color="primary"
+              density="compact"
+              hide-details
+              inset
+              :aria-label="isDarkTheme ? 'Use light theme' : 'Use dark theme'"
+            />
+          </template>
+        </v-tooltip>
       </div>
     </v-navigation-drawer>
 
@@ -506,6 +523,10 @@ onBeforeUnmount(stopResize);
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+.theme-switch {
+  min-height: 32px;
 }
 
 .header-row {

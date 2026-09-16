@@ -15,10 +15,20 @@ export const useRequestStore = defineStore("request", () => {
       initializationPromise = (async () => {
         try {
           historyStore = await load("request-history.json", { autoSave: true });
-          const storedRequests = (await historyStore.get<HttpRequest[]>("history")) ?? [];
-          history.value = storedRequests.map((request) => ({
-            request: cloneRequest(request),
-          }));
+          const storedHistory = (await historyStore.get<unknown[]>("history")) ?? [];
+          history.value = storedHistory.map((entry) => {
+            if (isPersistedEntry(entry)) {
+              return {
+                request: cloneRequest(entry.request),
+                timestamp: entry.timestamp,
+              };
+            }
+
+            return {
+              request: cloneRequest(entry as HttpRequest),
+              timestamp: new Date().toISOString(),
+            };
+          });
         } catch (error) {
           console.error("Failed to load request history:", error);
         }
@@ -32,6 +42,7 @@ export const useRequestStore = defineStore("request", () => {
     await initialize();
     history.value.push({
       request: cloneRequest(request),
+      timestamp: new Date().toISOString(),
       response: cloneResponse(response),
     });
     await saveHistory();
@@ -50,7 +61,7 @@ export const useRequestStore = defineStore("request", () => {
 
     await historyStore.set(
       "history",
-      history.value.map((entry) => entry.request)
+      history.value.map(({ request, timestamp }) => ({ request, timestamp }))
     );
     await historyStore.save();
   }
@@ -68,6 +79,19 @@ export const useRequestStore = defineStore("request", () => {
       ...response,
       headers: { ...response.headers },
     };
+  }
+
+  function isPersistedEntry(value: unknown): value is {
+    request: HttpRequest;
+    timestamp: string;
+  } {
+    return (
+      typeof value === "object" &&
+      value !== null &&
+      "request" in value &&
+      "timestamp" in value &&
+      typeof value.timestamp === "string"
+    );
   }
 
   return {

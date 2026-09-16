@@ -1,4 +1,5 @@
 use serde::Serialize;
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Serialize)]
@@ -13,7 +14,7 @@ async fn send_request(
     method: String,
     url: String,
     headers: Option<HashMap<String, String>>,
-    body: Option<HashMap<String, String>>,
+    body: Option<Value>,
 ) -> Result<ApiResponse, String> {
     let client = reqwest::Client::new();
     let start = std::time::Instant::now();
@@ -34,10 +35,16 @@ async fn send_request(
         }
     }
 
-    // Attach a JSON object body if provided
+    // Send strings as raw text and all other values as JSON.
     if let Some(b) = body {
-        if !b.is_empty() {
-            req = req.json(&b);
+        if !b.is_null() {
+            if let Value::String(text) = b {
+                if !text.is_empty() {
+                    req = req.body(text);
+                }
+            } else {
+                req = req.json(&b);
+            }
         }
     }
 
@@ -58,6 +65,7 @@ async fn send_request(
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_store::Builder::default().build())
         .invoke_handler(tauri::generate_handler![send_request])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

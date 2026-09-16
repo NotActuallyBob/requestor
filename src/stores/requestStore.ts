@@ -2,9 +2,11 @@ import { defineStore } from "pinia";
 import { ref } from "vue";
 import { load } from "@tauri-apps/plugin-store";
 import { HttpRequest } from "../model/HttpRequest";
+import { HttpResponse } from "../model/HttpResponse";
+import { RequestHistoryEntry } from "../model/RequestHistoryEntry";
 
 export const useRequestStore = defineStore("request", () => {
-  const history = ref<HttpRequest[]>([]);
+  const history = ref<RequestHistoryEntry[]>([]);
   let historyStore: Awaited<ReturnType<typeof load>> | null = null;
   let initializationPromise: Promise<void> | null = null;
 
@@ -13,7 +15,10 @@ export const useRequestStore = defineStore("request", () => {
       initializationPromise = (async () => {
         try {
           historyStore = await load("request-history.json", { autoSave: true });
-          history.value = (await historyStore.get<HttpRequest[]>("history")) ?? [];
+          const storedRequests = (await historyStore.get<HttpRequest[]>("history")) ?? [];
+          history.value = storedRequests.map((request) => ({
+            request: cloneRequest(request),
+          }));
         } catch (error) {
           console.error("Failed to load request history:", error);
         }
@@ -23,12 +28,11 @@ export const useRequestStore = defineStore("request", () => {
     return initializationPromise;
   }
 
-  async function addRequest(request: HttpRequest) {
+  async function addRequest(request: HttpRequest, response: HttpResponse) {
     await initialize();
     history.value.push({
-      ...request,
-      headers: { ...request.headers },
-      body: typeof request.body === "string" ? request.body : { ...request.body },
+      request: cloneRequest(request),
+      response: cloneResponse(response),
     });
     await saveHistory();
   }
@@ -44,8 +48,26 @@ export const useRequestStore = defineStore("request", () => {
       return;
     }
 
-    await historyStore.set("history", history.value);
+    await historyStore.set(
+      "history",
+      history.value.map((entry) => entry.request)
+    );
     await historyStore.save();
+  }
+
+  function cloneRequest(request: HttpRequest): HttpRequest {
+    return {
+      ...request,
+      headers: { ...request.headers },
+      body: typeof request.body === "string" ? request.body : { ...request.body },
+    };
+  }
+
+  function cloneResponse(response: HttpResponse): HttpResponse {
+    return {
+      ...response,
+      headers: { ...response.headers },
+    };
   }
 
   return {

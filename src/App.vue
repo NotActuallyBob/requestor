@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { useTheme } from "vuetify";
 import { HttpResponse } from "./model/HttpResponse";
 import { HttpRequest } from "./model/HttpRequest";
 import { HttpMethod } from "./model/HttpMethod";
 import { HttpContentType } from "./model/HttpContentType";
+import { RequestHistoryEntry } from "./model/RequestHistoryEntry";
 import { useRequestStore } from "./stores/requestStore";
 import { useSettingsStore } from "./stores/settingsStore";
 import JsonEditor from "./components/JsonEditor.vue";
@@ -27,7 +28,11 @@ const contentTypeOptions = [
 ];
 const recentRequests = computed(() => [...requestStore.history].reverse());
 const activeTab = ref("headers");
+const responseTab = ref("body");
 const contentType = ref<HttpContentType | null>(HttpContentType.JSON);
+const requestPaneSize = ref(50);
+const splitLayout = ref<HTMLElement | null>(null);
+const urlError = ref("");
 
 void requestStore.initialize();
 void settingsStore.initialize();
@@ -39,8 +44,18 @@ let nextHeaderId = 1;
 const response = ref<HttpResponse>({
   statusCode: 0,
   time_ms: 0,
+  headers: {},
   body: ""
 });
+
+function emptyResponse(): HttpResponse {
+  return {
+    statusCode: 0,
+    time_ms: 0,
+    headers: {},
+    body: "",
+  };
+}
 
 const request = ref<HttpRequest>({
   method: HttpMethod.GET,
@@ -60,6 +75,10 @@ watch(
 );
 
 async function sendRequest() {
+  if (!validateUrl()) {
+    return;
+  }
+
   console.log("Sending request:", request.value);
   const enabledHeaders = headerRows.value.reduce<Record<string, string>>(
     (headers, header) => {
@@ -76,7 +95,24 @@ async function sendRequest() {
   };
 
   response.value = await invoke<HttpResponse>("send_request", requestToSend);
-  await requestStore.addRequest(requestToSend);
+  await requestStore.addRequest(requestToSend, response.value);
+}
+
+function validateUrl() {
+  try {
+    const parsedUrl = new URL(request.value.url);
+
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      urlError.value = "Use an HTTP or HTTPS URL.";
+      return false;
+    }
+
+    urlError.value = "";
+    return true;
+  } catch {
+    urlError.value = "Include the protocol, for example https://www.google.com/";
+    return false;
+  }
 }
 
 function loadRequest(savedRequest: HttpRequest) {
@@ -106,6 +142,16 @@ function loadRequest(savedRequest: HttpRequest) {
     contentType.value = null;
   }
   nextHeaderId = headerRows.value.length;
+}
+
+function loadHistoryEntry(entry: RequestHistoryEntry) {
+  loadRequest(entry.request);
+  response.value = entry.response
+    ? {
+        ...entry.response,
+        headers: { ...entry.response.headers },
+      }
+    : emptyResponse();
 }
 
 function updateContentType(value: HttpContentType | null) {
@@ -147,6 +193,32 @@ function addHeader() {
 function removeHeader(id: number) {
   headerRows.value = headerRows.value.filter((header) => header.id !== id);
 }
+
+function startResize() {
+  window.addEventListener("pointermove", resizePanes);
+  window.addEventListener("pointerup", stopResize);
+  document.body.style.cursor = "row-resize";
+  document.body.style.userSelect = "none";
+}
+
+function resizePanes(event: PointerEvent) {
+  if (!splitLayout.value) {
+    return;
+  }
+
+  const bounds = splitLayout.value.getBoundingClientRect();
+  const percentage = ((event.clientY - bounds.top) / bounds.height) * 100;
+  requestPaneSize.value = Math.min(75, Math.max(25, percentage));
+}
+
+function stopResize() {
+  window.removeEventListener("pointermove", resizePanes);
+  window.removeEventListener("pointerup", stopResize);
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+}
+
+onBeforeUnmount(stopResize);
 </script>
 
 <template>
@@ -169,20 +241,21 @@ function removeHeader(id: number) {
         </div>
         <v-divider />
 
-        <v-list v-if="recentRequests.length" density="compact">
-          <v-list-item
-            v-for="(item, index) in recentRequests"
-            :key="`${item.url}-${index}`"
-            :title="`${item.method} ${item.url}`"
-            subtitle="Sent request"
-            @click="loadRequest(item)"
-          />
-        </v-list>
-        <v-list v-else>
-          <v-list-item title="No requests yet" />
-        </v-list>
+        <div class="history-list">
+          <v-list v-if="recentRequests.length" density="compact">
+            <v-list-item
+              v-for="(item, index) in recentRequests"
+              :key="`${item.request.url}-${index}`"
+              :title="`${item.request.method} ${item.request.url}`"
+              subtitle="Sent request"
+              @click="loadHistoryEntry(item)"
+            />
+          </v-list>
+          <v-list v-else>
+            <v-list-item title="No requests yet" />
+          </v-list>
+        </div>
 
-        <v-spacer />
         <v-divider />
         <v-switch
           v-model="isDarkTheme"
@@ -195,8 +268,13 @@ function removeHeader(id: number) {
       </div>
     </v-navigation-drawer>
 
-    <v-main>
-      <v-container fluid class="pa-6">
+    <v-main class="main-content">
+      <div
+        ref="splitLayout"
+        class="split-layout"
+        :style="{ gridTemplateRows: `${requestPaneSize}% 8px 1fr` }"
+      >
+        <v-container fluid class="request-pane pa-6">
         <v-row align="center" no-gutters>
           <v-col cols="12" sm="3" md="2" class="pr-sm-3 mb-3 mb-sm-0">
             <v-select
@@ -212,7 +290,8 @@ function removeHeader(id: number) {
               v-model="request.url"
               label="Request URL"
               placeholder="https://example.com"
-              hide-details
+              :error-messages="urlError ? [urlError] : []"
+              hide-details="auto"
               variant="outlined"
             />
           </v-col>
@@ -283,7 +362,50 @@ function removeHeader(id: number) {
             />
           </v-window-item>
         </v-window>
-      </v-container>
+        </v-container>
+
+        <div
+          class="split-divider"
+          role="separator"
+          aria-label="Resize request and response panels"
+          aria-orientation="horizontal"
+          @pointerdown="startResize"
+        />
+
+        <section class="response-pane pa-6">
+          <div class="response-heading">
+            <h2 class="text-h6">Response</h2>
+            <div class="response-meta">
+              <v-chip size="small" variant="tonal">Status: {{ response.statusCode }}</v-chip>
+              <v-chip size="small" variant="tonal">{{ response.time_ms }} ms</v-chip>
+            </div>
+          </div>
+
+          <v-tabs v-model="responseTab" class="mt-4" color="primary">
+            <v-tab value="body">Body</v-tab>
+            <v-tab value="headers">Headers</v-tab>
+          </v-tabs>
+
+          <v-window v-model="responseTab" class="mt-4">
+            <v-window-item value="body">
+              <pre class="response-body">{{ response.body }}</pre>
+            </v-window-item>
+            <v-window-item value="headers">
+              <div v-if="Object.keys(response.headers).length" class="response-headers">
+                <div
+                  v-for="(value, key) in response.headers"
+                  :key="key"
+                  class="response-header"
+                >
+                  <span class="response-header-key">{{ key }}</span>
+                  <span>{{ value }}</span>
+                </div>
+              </div>
+              <p v-else class="text-medium-emphasis">No response headers.</p>
+            </v-window-item>
+          </v-window>
+        </section>
+      </div>
     </v-main>
   </v-app>
 </template>
@@ -295,10 +417,95 @@ function removeHeader(id: number) {
   height: 100%;
 }
 
+.main-content {
+  height: 100vh;
+  max-height: 100vh;
+  min-height: 0;
+  overflow: hidden !important;
+}
+
+.main-content :deep(.v-main__wrap) {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.split-layout {
+  display: grid;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.request-pane,
+.response-pane {
+  min-height: 0;
+  overflow: auto;
+}
+
+.split-divider {
+  cursor: row-resize;
+  background: rgba(var(--v-theme-on-surface), 0.12);
+  transition: background-color 0.15s ease;
+}
+
+.split-divider:hover {
+  background: rgb(var(--v-theme-primary));
+}
+
+.response-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.response-meta {
+  display: flex;
+  gap: 8px;
+}
+
+.response-body {
+  min-height: 120px;
+  margin: 0;
+  padding: 16px;
+  overflow: auto;
+  white-space: pre-wrap;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 4px;
+  font-family: monospace;
+}
+
+.response-headers {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+  border-radius: 4px;
+}
+
+.response-header {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) 2fr;
+  gap: 16px;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.12);
+}
+
+.response-header:last-child {
+  border-bottom: 0;
+}
+
+.response-header-key {
+  font-weight: 600;
+}
+
 .history-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+
+.history-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .header-row {
@@ -309,5 +516,12 @@ function removeHeader(id: number) {
   min-height: 32px;
   color: rgba(var(--v-theme-on-surface), 0.6);
   font-size: 0.875rem;
+}
+
+:global(html),
+:global(body),
+:global(#app) {
+  height: 100%;
+  overflow: hidden;
 }
 </style>

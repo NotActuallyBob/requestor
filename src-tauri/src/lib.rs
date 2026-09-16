@@ -4,8 +4,10 @@ use std::collections::HashMap;
 
 #[derive(Serialize)]
 pub struct ApiResponse {
+    #[serde(rename = "statusCode")]
     status: u16,
     time_ms: u128,
+    headers: HashMap<String, String>,
     body: String,
 }
 
@@ -52,11 +54,22 @@ async fn send_request(
     let res = req.send().await.map_err(|e| e.to_string())?;
     let duration = start.elapsed().as_millis();
     let status = res.status().as_u16();
+    let response_headers = res
+        .headers()
+        .iter()
+        .map(|(key, value)| {
+            (
+                key.to_string(),
+                value.to_str().unwrap_or("<non-UTF-8 value>").to_string(),
+            )
+        })
+        .collect();
     let response_body = res.text().await.map_err(|e| e.to_string())?;
 
     Ok(ApiResponse {
         status,
         time_ms: duration,
+        headers: response_headers,
         body: response_body,
     })
 }

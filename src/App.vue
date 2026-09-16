@@ -9,6 +9,10 @@ import { useRequestStore } from "./stores/requestStore";
 const requestStore = useRequestStore();
 const methods = Object.values(HttpMethod);
 const recentRequests = computed(() => [...requestStore.history].reverse());
+const headerRows = ref([
+  { id: 0, enabled: true, key: "Content-Type", value: "application/json" },
+]);
+let nextHeaderId = 1;
 
 const response = ref<HttpResponse>({
   statusCode: 0,
@@ -27,8 +31,22 @@ const request = ref<HttpRequest>({
 
 async function sendRequest() {
   console.log("Sending request:", request.value);
-  response.value = await invoke<HttpResponse>("send_request", request.value);
-  requestStore.addRequest(request.value);
+  const enabledHeaders = headerRows.value.reduce<Record<string, string>>(
+    (headers, header) => {
+      if (header.enabled && header.key.trim()) {
+        headers[header.key.trim()] = header.value;
+      }
+      return headers;
+    },
+    {}
+  );
+  const requestToSend = {
+    ...request.value,
+    headers: enabledHeaders,
+  };
+
+  response.value = await invoke<HttpResponse>("send_request", requestToSend);
+  requestStore.addRequest(requestToSend);
 }
 
 function loadRequest(savedRequest: HttpRequest) {
@@ -37,6 +55,28 @@ function loadRequest(savedRequest: HttpRequest) {
     headers: { ...savedRequest.headers },
     body: { ...savedRequest.body },
   };
+  headerRows.value = Object.entries(savedRequest.headers).map(
+    ([key, value], index) => ({
+      id: index,
+      enabled: true,
+      key,
+      value,
+    })
+  );
+  nextHeaderId = headerRows.value.length;
+}
+
+function addHeader() {
+  headerRows.value.push({
+    id: nextHeaderId++,
+    enabled: false,
+    key: "",
+    value: "",
+  });
+}
+
+function removeHeader(id: number) {
+  headerRows.value = headerRows.value.filter((header) => header.id !== id);
 }
 </script>
 
@@ -87,7 +127,62 @@ function loadRequest(savedRequest: HttpRequest) {
             </v-btn>
           </v-col>
         </v-row>
+
+        <v-tabs class="mt-8" color="primary">
+          <v-tab value="headers">Headers</v-tab>
+        </v-tabs>
+
+        <v-window class="mt-4" model-value="headers">
+          <v-window-item value="headers">
+            <v-row class="header-row header-row-heading" no-gutters>
+              <v-col cols="1">Use</v-col>
+              <v-col cols="4">Key</v-col>
+              <v-col cols="5">Value</v-col>
+              <v-col cols="2"></v-col>
+            </v-row>
+
+            <v-row
+              v-for="header in headerRows"
+              :key="header.id"
+              class="header-row"
+              align="center"
+              no-gutters
+            >
+              <v-col cols="1">
+                <v-checkbox v-model="header.enabled" hide-details />
+              </v-col>
+              <v-col cols="4" class="pr-3">
+                <v-text-field v-model="header.key" label="Key" hide-details variant="outlined" />
+              </v-col>
+              <v-col cols="5" class="pr-3">
+                <v-text-field v-model="header.value" label="Value" hide-details variant="outlined" />
+              </v-col>
+              <v-col cols="2">
+                <v-btn
+                  icon="mdi-delete-outline"
+                  variant="text"
+                  aria-label="Remove header"
+                  @click="removeHeader(header.id)"
+                />
+              </v-col>
+            </v-row>
+
+            <v-btn class="mt-3" variant="outlined" @click="addHeader">Add header</v-btn>
+          </v-window-item>
+        </v-window>
       </v-container>
     </v-main>
   </v-app>
 </template>
+
+<style scoped>
+.header-row {
+  min-height: 64px;
+}
+
+.header-row-heading {
+  min-height: 32px;
+  color: rgba(var(--v-theme-on-surface), 0.6);
+  font-size: 0.875rem;
+}
+</style>

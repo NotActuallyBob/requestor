@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "requestor",
+  "productName": "Requestor",
   "version": "0.1.0",
   "identifier": "com.mikael.requestor",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "requestor",
+        "title": "Requestor",
         "width": 800,
         "height": 600
       }

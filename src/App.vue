@@ -29,6 +29,7 @@ const contentTypeOptions = [
 const recentRequests = computed(() => [...requestStore.history].reverse());
 const activeTab = ref("headers");
 const responseTab = ref("body");
+const prettyResponseJson = ref(false);
 const contentType = ref<HttpContentType | null>(HttpContentType.JSON);
 const requestPaneSize = ref(50);
 const splitLayout = ref<HTMLElement | null>(null);
@@ -64,6 +65,26 @@ const request = ref<HttpRequest>({
     "Content-Type": "application/json",
   },
   body: {}
+});
+
+const responseJson = computed(() => {
+  try {
+    return JSON.parse(response.value.body) as unknown;
+  } catch {
+    return null;
+  }
+});
+
+const canFormatResponseJson = computed(
+  () => response.value.body.trim() !== "" && responseJson.value !== null
+);
+
+const displayedResponseBody = computed(() => {
+  if (!prettyResponseJson.value || !canFormatResponseJson.value) {
+    return response.value.body;
+  }
+
+  return JSON.stringify(responseJson.value, null, 2);
 });
 
 watch(
@@ -191,7 +212,7 @@ function updateContentType(value: HttpContentType | null) {
 function addHeader() {
   headerRows.value.push({
     id: nextHeaderId++,
-    enabled: false,
+    enabled: true,
     key: "",
     value: "",
   });
@@ -405,7 +426,14 @@ onBeforeUnmount(stopResize);
 
           <v-window v-model="responseTab" class="mt-4">
             <v-window-item value="body">
-              <pre class="response-body">{{ response.body }}</pre>
+              <v-checkbox
+                v-model="prettyResponseJson"
+                label="Pretty JSON"
+                :disabled="!canFormatResponseJson"
+                hide-details
+                density="compact"
+              />
+              <pre class="response-body">{{ displayedResponseBody }}</pre>
             </v-window-item>
             <v-window-item value="headers">
               <div v-if="Object.keys(response.headers).length" class="response-headers">
